@@ -1,0 +1,189 @@
+@page "/todo"
+@using BlazorMinimalApp.Client.Services
+@inject TodoService TodoService
+@implements IAsyncDisposable
+
+<PageTitle>Todo - Blazor Minimal App</PageTitle>
+
+<div class="bg-white shadow overflow-hidden sm:rounded-lg">
+    <div class="px-4 py-5 sm:px-6">
+        <h1 class="text-2xl font-bold text-gray-900">Todo List</h1>
+        <p class="mt-1 max-w-2xl text-sm text-gray-500">
+            This page demonstrates Entity Framework with SQLite and real-time updates with SignalR.
+        </p>
+    </div>
+    
+    <div class="border-t border-gray-200 px-4 py-5 sm:px-6">
+        <div class="flex space-x-3">
+            <div class="flex-1">
+                <input type="text" @bind="newTodoTitle" @onkeyup="HandleKeyUp" placeholder="Add a new todo item..." 
+                       class="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md p-2 border" />
+            </div>
+            <button @onclick="AddTodo" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                Add
+            </button>
+        </div>
+        
+        @if (isLoading)
+        {
+            <div class="flex justify-center my-8">
+                <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+            </div>
+        }
+        else if (todoItems.Count == 0)
+        {
+            <div class="text-center my-8 text-gray-500">
+                No todo items yet. Add one above!
+            </div>
+        }
+        else
+        {
+            <ul class="divide-y divide-gray-200 mt-4">
+                @foreach (var item in todoItems)
+                {
+                    <li class="py-4 flex items-center justify-between">
+                        <div class="flex items-center">
+                            <input id="todo-@item.Id" name="todo-@item.Id" type="checkbox" checked="@item.IsComplete" 
+                                   @onchange="e => ToggleTodo(item, e.Value is bool value && value)"
+                                   class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded" />
+                            <label for="todo-@item.Id" class="ml-3 block text-sm font-medium @(item.IsComplete ? "text-gray-400 line-through" : "text-gray-700")">
+                                @item.Title
+                            </label>
+                        </div>
+                        <button @onclick="() => DeleteTodo(item)" class="text-red-500 hover:text-red-700">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+    
+    <div class="border-t border-gray-200 px-4 py-5 sm:px-6 bg-gray-50">
+        <div class="flex items-center">
+            <div class="@(isConnected ? "bg-green-500" : "bg-red-500") rounded-full h-3 w-3 mr-2"></div>
+            <span class="text-sm text-gray-500">SignalR: @(isConnected ? "Connected" : "Disconnected")</span>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<TodoItem> todoItems = new();
+    private string newTodoTitle = "";
+    private bool isLoading = true;
+    private bool isConnected = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            // Set up SignalR event handlers
+            TodoService.OnTodoItemAdded += HandleTodoItemAdded;
+            TodoService.OnTodoItemUpdated += HandleTodoItemUpdated;
+            TodoService.OnTodoItemDeleted += HandleTodoItemDeleted;
+
+            // Start SignalR connection
+            await TodoService.StartHubConnection();
+            isConnected = true;
+
+            // Load initial data
+            todoItems = await TodoService.GetTodoItemsAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error initializing: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void HandleTodoItemAdded(TodoItem todoItem)
+    {
+        // Check if the item already exists
+        if (!todoItems.Any(t => t.Id == todoItem.Id))
+        {
+            todoItems.Add(todoItem);
+            StateHasChanged();
+        }
+    }
+
+    private void HandleTodoItemUpdated(TodoItem todoItem)
+    {
+        var index = todoItems.FindIndex(t => t.Id == todoItem.Id);
+        if (index != -1)
+        {
+            todoItems[index] = todoItem;
+            StateHasChanged();
+        }
+    }
+
+    private void HandleTodoItemDeleted(int id)
+    {
+        var item = todoItems.FirstOrDefault(t => t.Id == id);
+        if (item != null)
+        {
+            todoItems.Remove(item);
+            StateHasChanged();
+        }
+    }
+
+    private async Task AddTodo()
+    {
+        if (string.IsNullOrWhiteSpace(newTodoTitle))
+            return;
+
+        try
+        {
+            await TodoService.AddTodoItemViaHubAsync(newTodoTitle);
+            newTodoTitle = "";
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error adding todo: {ex.Message}");
+        }
+    }
+
+    private async Task ToggleTodo(TodoItem item, bool isComplete)
+    {
+        try
+        {
+            await TodoService.UpdateTodoItemViaHubAsync(item.Id, isComplete);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error toggling todo: {ex.Message}");
+        }
+    }
+
+    private async Task DeleteTodo(TodoItem item)
+    {
+        try
+        {
+            await TodoService.DeleteTodoItemViaHubAsync(item.Id);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error deleting todo: {ex.Message}");
+        }
+    }
+
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await AddTodo();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        TodoService.OnTodoItemAdded -= HandleTodoItemAdded;
+        TodoService.OnTodoItemUpdated -= HandleTodoItemUpdated;
+        TodoService.OnTodoItemDeleted -= HandleTodoItemDeleted;
+        await TodoService.DisposeAsync();
+    }
+}
